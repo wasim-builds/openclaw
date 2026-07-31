@@ -68,6 +68,7 @@ export class GatewayBrowserDeviceAuthLifecycle {
     trustedDeviceTokenRetry?: boolean;
     preferBootstrapToken?: boolean;
     nonce: string | null;
+    challengeTs?: number | null;
   }): Promise<GatewayBrowserDeviceAuthPlan> {
     const identity = await this.deps.loadIdentity();
     const stored = identity
@@ -109,7 +110,12 @@ export class GatewayBrowserDeviceAuthLifecycle {
         auth: buildGatewayConnectAuth(selectedAuth),
       };
     }
-    const signedAtMs = this.deps.nowMs?.() ?? Date.now();
+    // Undefined is the legacy-Gateway compatibility path; null means malformed wire input.
+    const signedAtMs =
+      params.challengeTs === undefined ? (this.deps.nowMs?.() ?? Date.now()) : params.challengeTs;
+    if (!Number.isSafeInteger(signedAtMs) || signedAtMs < 0) {
+      throw new Error("gateway connect challenge timestamp invalid");
+    }
     const nonce = params.nonce ?? "";
     const { authBootstrapToken: primary, signatureToken: signed } = selectedAuth;
     let token: string | null = null;

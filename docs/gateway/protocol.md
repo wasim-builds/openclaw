@@ -92,6 +92,11 @@ Gateway sends a pre-connect challenge:
 }
 ```
 
+Device-auth clients use the challenge `ts` as `connect.params.device.signedAt`.
+Older Gateway releases may omit `ts`; clients that support those releases can fall
+back to their local clock only when the field is absent. A present value that is
+not a non-negative integer is invalid.
+
 Client replies with `connect`:
 
 ```json
@@ -1165,6 +1170,7 @@ Common migration failures:
 Migration target:
 
 - Always wait for `connect.challenge`.
+- Use `connect.challenge.payload.ts` as `connect.params.device.signedAt` when present.
 - Sign the v2 payload that includes the server nonce.
 - Send the same nonce in `connect.params.device.nonce`.
 - Preferred signature payload is `v3`

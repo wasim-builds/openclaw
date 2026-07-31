@@ -65,9 +65,11 @@ gateway` or the `openclaw onboard --gateway-auth ...` options, then let device
 pairing mint the client token:
 
 1. Persist an Ed25519 device identity in the client.
-2. Wait for `connect.challenge`, sign the challenge-bound device payload, and send
-   `connect` with the requested operator role, scopes, and the shared Gateway token
-   or password for bootstrap authentication.
+2. Wait for `connect.challenge`, use its `ts` as the device proof's `signedAt`,
+   sign the challenge-bound device payload, and send `connect` with the requested
+   operator role, scopes, and the shared Gateway token or password for bootstrap
+   authentication. Use local time only when supporting an older Gateway that
+   omits `ts`; reject a present malformed timestamp.
 3. If the Gateway returns structured `PAIRING_REQUIRED` details, show the request
    ID and pause or retry according to `error.details.recommendedNextStep`.
 4. On the Gateway host, review the request with `openclaw devices list`, then

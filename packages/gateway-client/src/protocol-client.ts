@@ -29,6 +29,7 @@ export type GatewayProtocolRequestOptions = {
 type GatewayProtocolConnectContext<TPlan> = {
   generation: number;
   nonce: string | null;
+  challengeTs: number | null | undefined;
   plan: TPlan;
 };
 export type GatewayProtocolCloseContext = {
@@ -88,6 +89,7 @@ type GatewayProtocolClientOptions<TPlan> = {
   createRequestAbortError?: (method: string) => Error;
   buildConnectPlan: (params: {
     nonce: string | null;
+    challengeTs: number | null | undefined;
     generation: number;
   }) => TPlan | Promise<TPlan>;
   buildConnectParams: (plan: TPlan) => unknown;
@@ -162,6 +164,7 @@ export class GatewayProtocolClient<TPlan> {
   private generation = 0;
   private lastSeq: number | null = null;
   private connectNonce: string | null = null;
+  private connectChallengeTs: number | null | undefined;
   private connectSent = false;
   private connectRequestSent = false;
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -354,6 +357,7 @@ export class GatewayProtocolClient<TPlan> {
     const generation = this.generation + 1;
     this.lastSeq = null; // Outer event sequences belong to one WebSocket generation.
     this.connectNonce = null;
+    this.connectChallengeTs = undefined;
     this.connectSent = this.connectRequestSent = false;
     this.socketOpened = false;
     this.helloReceived = false;
@@ -450,6 +454,7 @@ export class GatewayProtocolClient<TPlan> {
     try {
       planOrPromise = this.opts.buildConnectPlan({
         nonce: this.connectNonce,
+        challengeTs: this.connectChallengeTs,
         generation,
       });
     } catch (error) {
@@ -489,7 +494,12 @@ export class GatewayProtocolClient<TPlan> {
     if (!this.isActive(socket, generation) || !socket.isOpen()) {
       return;
     }
-    const context = { generation, nonce: this.connectNonce, plan };
+    const context = {
+      generation,
+      nonce: this.connectNonce,
+      challengeTs: this.connectChallengeTs,
+      plan,
+    };
     this.recordTiming("connect-plan-ready", generation, plan);
     this.recordTiming("request-sent", generation, plan);
     this.connectRequestSent = true;
@@ -543,7 +553,7 @@ export class GatewayProtocolClient<TPlan> {
     if (isGatewayEventFrame(parsed)) {
       this.opts.onActivity?.();
       if (parsed.event === "connect.challenge") {
-        const payload = parsed.payload as { nonce?: unknown } | undefined;
+        const payload = parsed.payload as { nonce?: unknown; ts?: unknown } | undefined;
         const nonce = typeof payload?.nonce === "string" ? payload.nonce.trim() : "";
         if (!nonce) {
           if (this.opts.handshake.mode === "require-challenge") {
@@ -554,6 +564,15 @@ export class GatewayProtocolClient<TPlan> {
           return;
         }
         this.connectNonce = nonce;
+        const challengeTs = payload?.ts;
+        this.connectChallengeTs =
+          challengeTs === undefined
+            ? undefined
+            : typeof challengeTs === "number" &&
+                Number.isSafeInteger(challengeTs) &&
+                challengeTs >= 0
+              ? challengeTs
+              : null;
         this.recordTiming("challenge", generation);
         this.sendConnect(socket, generation);
         return;

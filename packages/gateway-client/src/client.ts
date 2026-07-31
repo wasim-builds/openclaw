@@ -404,11 +404,19 @@ export class GatewayClient {
       createRequestError: (error) => new GatewayClientRequestError(error),
       createRequestTimeoutError: (method) => new Error(`gateway request timeout for ${method}`),
       createRequestAbortError: createGatewayRequestAbortError,
-      buildConnectPlan: ({ nonce }) => {
+      buildConnectPlan: ({ nonce, challengeTs }) => {
         if (!nonce) {
           throw new Error("gateway connect challenge missing nonce");
         }
-        return this.assembleConnectParams({ role: this.opts.role ?? "operator", nonce });
+        if (this.opts.deviceIdentity && challengeTs === null) {
+          throw new Error("gateway connect challenge timestamp invalid");
+        }
+        // Older released Gateways omitted ts; preserve their prior local-clock signing behavior.
+        return this.assembleConnectParams({
+          role: this.opts.role ?? "operator",
+          nonce,
+          signedAtMs: challengeTs ?? Date.now(),
+        });
       },
       buildConnectParams: (assembled) => assembled.params,
       onConnectPlanError: (error) => {
@@ -715,8 +723,12 @@ export class GatewayClient {
     this.deps.logError(this.deps.redactForLog(message));
   }
 
-  private assembleConnectParams(params: { role: string; nonce: string }): AssembledConnect {
-    const { role, nonce } = params;
+  private assembleConnectParams(params: {
+    role: string;
+    nonce: string;
+    signedAtMs: number;
+  }): AssembledConnect {
+    const { role, nonce, signedAtMs } = params;
     // Auth selection is intentionally centralized: retry decisions depend on
     // whether a token was explicit, cached, or compatibility-derived.
     const selectedAuth = this.selectConnectAuth(role);
@@ -736,7 +748,6 @@ export class GatewayClient {
     }
 
     const auth = buildGatewayConnectAuth(selectedAuth);
-    const signedAtMs = Date.now();
     const scopes = resolveGatewayConnectScopes({
       requestedScopes: this.opts.scopes,
       usingStoredDeviceToken,

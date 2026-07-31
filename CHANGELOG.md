@@ -57,6 +57,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- **Gateway device clock skew:** sign device proofs with the Gateway-issued challenge timestamp across TypeScript, Control UI, browser extension, Android, Apple, Linux, and watchOS clients so incorrect local clocks no longer block authentication, while retaining the local-clock fallback for older Gateways and keeping nonce binding and freshness checks enforced. Fixes #103455.
 - **Control UI dynamic deep links:** reuse the initial route loader result when publishing real agent, session, dashboard, Workboard, Memory, and Plugins paths, avoiding redundant route-loader work during startup. Thanks @shakkernerd.
 - **Linux gateway service ownership:** refuse user-scope systemd publication and activation when the same gateway unit name is already owned or cannot be verified in the system scope, including `--force`, with actionable recovery guidance instead of creating restart-looping dual managers. Fixes #116129.
 - **macOS remote tunnel lifecycle:** prevent cancelled or superseded restart backoffs from recreating SSH tunnels, and join a tunnel create that another caller started while the actor was suspended.

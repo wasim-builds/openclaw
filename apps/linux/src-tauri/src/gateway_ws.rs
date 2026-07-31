@@ -721,18 +721,22 @@ impl GatewayClient {
         let mut socket = tokio::time::timeout(CONNECT_TIMEOUT, connect_gateway_socket(config))
             .await
             .map_err(|_| RequestFailure::transport("Gateway connection timed out."))??;
-        let nonce = wait_for_connect_challenge(&mut socket).await?;
-        let signed_at_ms = unix_time_ms().map_err(RequestFailure::transport)?;
+        let challenge = wait_for_connect_challenge(&mut socket).await?;
         // Native child WebViews use platform HTTP trust and cannot bind the optional
         // WebSocket leaf pin, so pinned Gateway connections remain capability-free.
         let inline_widgets_available = config
             .tls_fingerprint
             .as_deref()
             .is_none_or(|value| value.trim().is_empty());
+        // Older released Gateways omitted ts; retain their prior local-clock signing behavior.
+        let signed_at_ms = match challenge.issued_at_ms {
+            Some(timestamp) => timestamp,
+            None => unix_time_ms().map_err(RequestFailure::transport)?,
+        };
         let params = connect_params(
             &identity,
             &auth,
-            &nonce,
+            &challenge.nonce,
             signed_at_ms,
             inline_widgets_available,
         )
@@ -1127,22 +1131,44 @@ fn request_frame(id: &str, method: &str, params: Value) -> Value {
     })
 }
 
-async fn wait_for_connect_challenge(socket: &mut GatewaySocket) -> Result<String, RequestFailure> {
+#[derive(Debug, PartialEq, Eq)]
+struct ConnectChallenge {
+    nonce: String,
+    issued_at_ms: Option<u64>,
+}
+
+fn parse_connect_challenge(value: &Value) -> Result<ConnectChallenge, RequestFailure> {
+    let nonce = value
+        .get("payload")
+        .and_then(|payload| payload.get("nonce"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|nonce| !nonce.is_empty());
+    let payload = value.get("payload");
+    let issued_at_ms = match payload.and_then(|payload| payload.get("ts")) {
+        None => None,
+        Some(timestamp) => Some(timestamp.as_u64().ok_or_else(|| {
+            RequestFailure::transport("Gateway challenge timestamp was invalid.")
+        })?),
+    };
+    nonce
+        .map(|nonce| ConnectChallenge {
+            nonce: nonce.to_owned(),
+            issued_at_ms,
+        })
+        .ok_or_else(|| RequestFailure::transport("Gateway challenge omitted nonce."))
+}
+
+async fn wait_for_connect_challenge(
+    socket: &mut GatewaySocket,
+) -> Result<ConnectChallenge, RequestFailure> {
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         loop {
             let value = next_json(socket).await?;
             if value.get("type").and_then(Value::as_str) == Some("event")
                 && value.get("event").and_then(Value::as_str) == Some("connect.challenge")
             {
-                let nonce = value
-                    .get("payload")
-                    .and_then(|payload| payload.get("nonce"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|nonce| !nonce.is_empty());
-                return nonce
-                    .map(ToOwned::to_owned)
-                    .ok_or_else(|| RequestFailure::transport("Gateway challenge omitted nonce."));
+                return parse_connect_challenge(&value);
             }
         }
     })
@@ -1663,6 +1689,36 @@ mod tests {
         // Pinning only withdraws inline widgets; agent-kind is unconditional.
         assert_eq!(pinned_params["caps"], json!([AGENT_KIND_CLIENT_CAPABILITY]));
         std::fs::remove_dir_all(directory).expect("remove connect fixture");
+    }
+
+    #[test]
+    fn connect_challenge_uses_gateway_timestamp() {
+        let Ok(challenge) = parse_connect_challenge(&json!({
+            "payload": {
+                "nonce": " fixture-nonce ",
+                "ts": 1_700_000_000_123_u64
+            }
+        })) else {
+            panic!("expected valid challenge");
+        };
+
+        assert_eq!(
+            challenge,
+            ConnectChallenge {
+                nonce: "fixture-nonce".to_string(),
+                issued_at_ms: Some(1_700_000_000_123),
+            }
+        );
+        let Ok(legacy_challenge) = parse_connect_challenge(&json!({
+            "payload": { "nonce": "legacy-nonce" }
+        })) else {
+            panic!("expected legacy challenge");
+        };
+        assert_eq!(legacy_challenge.issued_at_ms, None);
+        assert!(parse_connect_challenge(&json!({
+            "payload": { "nonce": "fixture-nonce", "ts": "1700000000123" }
+        }))
+        .is_err());
     }
 
     #[test]
