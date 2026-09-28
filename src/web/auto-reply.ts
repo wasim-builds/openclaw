@@ -75,16 +75,26 @@ export function stripHeartbeatToken(raw?: string) {
 }
 
 export async function runWebHeartbeatOnce(opts: {
-  to: string;
+  to?: string;
   verbose?: boolean;
   replyResolver?: typeof getReplyFromConfig;
   runtime?: RuntimeEnv;
   sender?: typeof sendMessageWeb;
 }) {
-  const { to, verbose = false } = opts;
+  const { verbose = false } = opts;
   const _runtime = opts.runtime ?? defaultRuntime;
   const replyResolver = opts.replyResolver ?? getReplyFromConfig;
   const sender = opts.sender ?? sendMessageWeb;
+
+  const cfg = loadConfig();
+  const to = opts.to?.trim() || getFallbackRecipient(cfg);
+  if (!to) {
+    if (verbose) {
+      console.log(success("heartbeat: skipped (no recipient)"));
+    }
+    return;
+  }
+
   const runId = newConnectionId();
   const heartbeatLogger = getChildLogger({
     module: "web-heartbeat",
@@ -92,7 +102,6 @@ export async function runWebHeartbeatOnce(opts: {
     to,
   });
 
-  const cfg = loadConfig();
   const sessionSnapshot = getSessionSnapshot(cfg, to, true);
   if (verbose) {
     heartbeatLogger.info(
@@ -137,7 +146,7 @@ export async function runWebHeartbeatOnce(opts: {
     }
 
     const hasMedia =
-      (replyResult.mediaUrl ?? replyResult.mediaUrls?.length ?? 0) > 0;
+      Boolean(replyResult.mediaUrl) || (replyResult.mediaUrls?.length ?? 0) > 0;
     const stripped = stripHeartbeatToken(replyResult.text);
     if (stripped.shouldSkip && !hasMedia) {
       // Don't let heartbeats keep sessions alive: restore previous updatedAt so idle expiry still works.
@@ -600,7 +609,8 @@ export async function monitorWebProvider(
 
         const stripped = stripHeartbeatToken(replyResult.text);
         const hasMedia =
-          (replyResult.mediaUrl ?? replyResult.mediaUrls?.length ?? 0) > 0;
+          Boolean(replyResult.mediaUrl) ||
+          (replyResult.mediaUrls?.length ?? 0) > 0;
         if (stripped.shouldSkip && !hasMedia) {
           heartbeatLogger.info(
             {

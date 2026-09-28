@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { WarelayConfig } from "../config/config.js";
+import { resolveStorePath } from "../config/sessions.js";
 import { resetLogger, setLoggerOverride } from "../logging.js";
 import {
   HEARTBEAT_TOKEN,
@@ -20,7 +21,6 @@ import {
   resetLoadConfigMock,
   setLoadConfigMock,
 } from "./test-helpers.js";
-import { resolveStorePath } from "../config/sessions.js";
 
 describe("heartbeat helpers", () => {
   it("strips heartbeat token and skips when only token", () => {
@@ -132,7 +132,6 @@ describe("runWebHeartbeatOnce", () => {
       },
     });
     await runWebHeartbeatOnce({
-      to: "+1999",
       verbose: false,
       sender,
       replyResolver: resolver,
@@ -426,108 +425,106 @@ describe("web auto-reply", () => {
     fetchMock.mockRestore();
   });
 
-  it(
-    "compresses common formats to jpeg under the cap",
-    { timeout: 15_000 },
-    async () => {
-      const formats = [
-        {
-          name: "png",
-          mime: "image/png",
-          make: (buf: Buffer, opts: { width: number; height: number }) =>
-            sharp(buf, {
-              raw: { width: opts.width, height: opts.height, channels: 3 },
-            })
-              .png({ compressionLevel: 0 })
-              .toBuffer(),
-        },
-        {
-          name: "jpeg",
-          mime: "image/jpeg",
-          make: (buf: Buffer, opts: { width: number; height: number }) =>
-            sharp(buf, {
-              raw: { width: opts.width, height: opts.height, channels: 3 },
-            })
-              .jpeg({ quality: 100, chromaSubsampling: "4:4:4" })
-              .toBuffer(),
-        },
-        {
-          name: "webp",
-          mime: "image/webp",
-          make: (buf: Buffer, opts: { width: number; height: number }) =>
-            sharp(buf, {
-              raw: { width: opts.width, height: opts.height, channels: 3 },
-            })
-              .webp({ quality: 100 })
-              .toBuffer(),
-        },
-      ] as const;
+  it("compresses common formats to jpeg under the cap", {
+    timeout: 15_000,
+  }, async () => {
+    const formats = [
+      {
+        name: "png",
+        mime: "image/png",
+        make: (buf: Buffer, opts: { width: number; height: number }) =>
+          sharp(buf, {
+            raw: { width: opts.width, height: opts.height, channels: 3 },
+          })
+            .png({ compressionLevel: 0 })
+            .toBuffer(),
+      },
+      {
+        name: "jpeg",
+        mime: "image/jpeg",
+        make: (buf: Buffer, opts: { width: number; height: number }) =>
+          sharp(buf, {
+            raw: { width: opts.width, height: opts.height, channels: 3 },
+          })
+            .jpeg({ quality: 100, chromaSubsampling: "4:4:4" })
+            .toBuffer(),
+      },
+      {
+        name: "webp",
+        mime: "image/webp",
+        make: (buf: Buffer, opts: { width: number; height: number }) =>
+          sharp(buf, {
+            raw: { width: opts.width, height: opts.height, channels: 3 },
+          })
+            .webp({ quality: 100 })
+            .toBuffer(),
+      },
+    ] as const;
 
-      for (const fmt of formats) {
-        // Force a small cap to ensure compression is exercised for every format.
-        setLoadConfigMock(() => ({ inbound: { reply: { mediaMaxMb: 1 } } }));
-        const sendMedia = vi.fn();
-        const reply = vi.fn().mockResolvedValue(undefined);
-        const sendComposing = vi.fn();
-        const resolver = vi.fn().mockResolvedValue({
-          text: "hi",
-          mediaUrl: `https://example.com/big.${fmt.name}`,
-        });
+    for (const fmt of formats) {
+      // Force a small cap to ensure compression is exercised for every format.
+      setLoadConfigMock(() => ({ inbound: { reply: { mediaMaxMb: 1 } } }));
+      const sendMedia = vi.fn();
+      const reply = vi.fn().mockResolvedValue(undefined);
+      const sendComposing = vi.fn();
+      const resolver = vi.fn().mockResolvedValue({
+        text: "hi",
+        mediaUrl: `https://example.com/big.${fmt.name}`,
+      });
 
-        let capturedOnMessage:
-          | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
-          | undefined;
-        const listenerFactory = async (opts: {
-          onMessage: (
-            msg: import("./inbound.js").WebInboundMessage,
-          ) => Promise<void>;
-        }) => {
-          capturedOnMessage = opts.onMessage;
-          return { close: vi.fn() };
-        };
+      let capturedOnMessage:
+        | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
+        | undefined;
+      const listenerFactory = async (opts: {
+        onMessage: (
+          msg: import("./inbound.js").WebInboundMessage,
+        ) => Promise<void>;
+      }) => {
+        capturedOnMessage = opts.onMessage;
+        return { close: vi.fn() };
+      };
 
-        const width = 1200;
-        const height = 1200;
-        const raw = crypto.randomBytes(width * height * 3);
-        const big = await fmt.make(raw, { width, height });
-        expect(big.length).toBeGreaterThan(1 * 1024 * 1024);
+      const width = 1200;
+      const height = 1200;
+      const raw = crypto.randomBytes(width * height * 3);
+      const big = await fmt.make(raw, { width, height });
+      expect(big.length).toBeGreaterThan(1 * 1024 * 1024);
 
-        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-          ok: true,
-          body: true,
-          arrayBuffer: async () =>
-            big.buffer.slice(big.byteOffset, big.byteOffset + big.byteLength),
-          headers: { get: () => fmt.mime },
-          status: 200,
-        } as Response);
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        body: true,
+        arrayBuffer: async () =>
+          big.buffer.slice(big.byteOffset, big.byteOffset + big.byteLength),
+        headers: { get: () => fmt.mime },
+        status: 200,
+      } as Response);
 
-        await monitorWebProvider(false, listenerFactory, false, resolver);
-        expect(capturedOnMessage).toBeDefined();
+      await monitorWebProvider(false, listenerFactory, false, resolver);
+      expect(capturedOnMessage).toBeDefined();
 
-        await capturedOnMessage?.({
-          body: "hello",
-          from: "+1",
-          to: "+2",
-          id: `msg-${fmt.name}`,
-          sendComposing,
-          reply,
-          sendMedia,
-        });
+      await capturedOnMessage?.({
+        body: "hello",
+        from: "+1",
+        to: "+2",
+        id: `msg-${fmt.name}`,
+        sendComposing,
+        reply,
+        sendMedia,
+      });
 
-        expect(sendMedia).toHaveBeenCalledTimes(1);
-        const payload = sendMedia.mock.calls[0][0] as {
-          image: Buffer;
-          mimetype?: string;
-        };
-        expect(payload.image.length).toBeLessThanOrEqual(1 * 1024 * 1024);
-        expect(payload.mimetype).toBe("image/jpeg");
-        expect(reply).not.toHaveBeenCalled();
+      expect(sendMedia).toHaveBeenCalledTimes(1);
+      const payload = sendMedia.mock.calls[0][0] as {
+        image: Buffer;
+        mimetype?: string;
+      };
+      expect(payload.image.length).toBeLessThanOrEqual(1 * 1024 * 1024);
+      expect(payload.mimetype).toBe("image/jpeg");
+      expect(reply).not.toHaveBeenCalled();
 
-        fetchMock.mockRestore();
-        resetLoadConfigMock();
-      }
-    },
-  );
+      fetchMock.mockRestore();
+      resetLoadConfigMock();
+    }
+  });
 
   it("honors mediaMaxMb from config", async () => {
     setLoadConfigMock(() => ({ inbound: { reply: { mediaMaxMb: 1 } } }));

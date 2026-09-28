@@ -21,7 +21,6 @@ export type SessionConfig = {
   sendSystemOnce?: boolean;
   sessionIntro?: string;
   typingIntervalSeconds?: number;
-  heartbeatMinutes?: number;
 };
 
 export type LoggingConfig = {
@@ -61,6 +60,7 @@ export type WarelayConfig = {
       bodyPrefix?: string; // optional string prepended to Body before templating
       mediaUrl?: string; // optional media attachment (path or URL)
       session?: SessionConfig;
+      heartbeatMinutes?: number;
       claudeOutputFormat?: ClaudeOutputFormat; // when command starts with `claude`, force an output format
       mediaMaxMb?: number; // optional cap for outbound media (default 5MB)
       typingIntervalSeconds?: number; // how often to refresh typing indicator while command runs
